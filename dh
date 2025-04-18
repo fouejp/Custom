@@ -33,19 +33,11 @@ local Prediction = 0.123
 local Smoothness = 1
 
 -- Fly Vars
-local IsFlying = false
 local CanFly = false
+local IsFlying = false
 local FlySpeed = 50
-local Movement = {
-    W = false,
-    A = false,
-    S = false,
-    D = false,
-    Up = false,
-    Down = false
-}
 
--- UI Toggles
+-- UI Flags
 CamlockBox:AddToggle('EnableCamlock', {
     Text = 'Camlock',
     Default = false,
@@ -82,14 +74,22 @@ FlyBox:AddToggle('AllowFly', {
         CanFly = v
         if not v and IsFlying then
             IsFlying = false
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.PlatformStand = false end
             Library:Notify('Fly forcibly disabled')
         end
     end
 })
 
--- Camlock Function
+FlyBox:AddInput('FlySpeedInput', {
+    Text = 'Fly Speed',
+    Default = tostring(FlySpeed),
+    Numeric = true,
+    Finished = true,
+    Callback = function(val)
+        FlySpeed = tonumber(val) or 50
+    end
+})
+
+-- Camlock Behavior
 RunService.RenderStepped:Connect(function()
     if CamlockEnabled and LockedTarget and LockedTarget.Character and LockedTarget.Character:FindFirstChild("HumanoidRootPart") then
         local targetPos = LockedTarget.Character.HumanoidRootPart.Position + (LockedTarget.Character.HumanoidRootPart.Velocity * Prediction)
@@ -98,60 +98,58 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Fly Movement
+-- Fly Movement (natural + smooth + animated)
 RunService.RenderStepped:Connect(function()
-    if IsFlying and CanFly and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        local hrp = LocalPlayer.Character.HumanoidRootPart
-        local camCF = Camera.CFrame
-        local moveDirection = Vector3.zero
+    if IsFlying and CanFly then
+        local char = LocalPlayer.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+        local hrp = char.HumanoidRootPart
 
-        if Movement.W then moveDirection = moveDirection + camCF.LookVector end
-        if Movement.S then moveDirection = moveDirection - camCF.LookVector end
-        if Movement.A then moveDirection = moveDirection - camCF.RightVector end
-        if Movement.D then moveDirection = moveDirection + camCF.RightVector end
-        if Movement.Up then moveDirection = moveDirection + Vector3.new(0, 1, 0) end
-        if Movement.Down then moveDirection = moveDirection - Vector3.new(0, 1, 0) end
+        local camCF = workspace.CurrentCamera.CFrame
+        local direction = Vector3.zero
 
-        moveDirection = moveDirection.Unit * FlySpeed
-        if moveDirection.Magnitude > 0 then
-            hrp.Velocity = moveDirection
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction += camCF.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction -= camCF.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction -= camCF.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction += camCF.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction += Vector3.new(0, 1, 0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then direction -= Vector3.new(0, 1, 0) end
+
+        if direction.Magnitude > 0 then
+            direction = direction.Unit
+            hrp.Velocity = hrp.Velocity:Lerp(direction * FlySpeed, 0.25)
         else
-            hrp.Velocity = Vector3.zero
+            hrp.Velocity = hrp.Velocity:Lerp(Vector3.zero, 0.25)
         end
 
-        if hrp.Position.Y < -25 then
+        -- Keep animations working
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
+
+        -- Void protection
+        if hrp.Position.Y < -100 then
             IsFlying = false
-            hrp.CFrame = CFrame.new(0, 50, 0)
-            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.PlatformStand = false end
-            Library:Notify("Fly disabled: void protection")
+            Library:Notify("Fly auto-disabled: void detected")
         end
     end
 end)
 
--- Input
+-- Input Controls
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
 
-    -- Fly toggle
-    if input.KeyCode == Enum.KeyCode.Z and CanFly then
-        IsFlying = not IsFlying
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand = IsFlying end
-        Library:Notify(IsFlying and "Fly Enabled" or "Fly Disabled")
-    end
-
-    -- Camlock
     if input.KeyCode == Enum.KeyCode.Q and CamlockEnabled then
         if LockedTarget then
             LockedTarget = nil
-            Library:Notify("Camlock Unlocked")
+            Library:Notify('Camlock Unlocked')
         else
-            local closest, shortest = nil, math.huge
+            local closest = nil
+            local shortest = math.huge
             for _, player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
                     local screenPoint, onScreen = Camera:WorldToScreenPoint(player.Character.HumanoidRootPart.Position)
-                    local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+                    local mousePos = Vector2.new(Mouse.X, Mouse.Y)
+                    local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - mousePos).Magnitude
                     if dist < shortest and onScreen then
                         shortest = dist
                         closest = player
@@ -160,27 +158,21 @@ UserInputService.InputBegan:Connect(function(input, gpe)
             end
             LockedTarget = closest
             if LockedTarget then
-                Library:Notify("Locked onto: " .. LockedTarget.Name)
+                Library:Notify('Locked onto: ' .. LockedTarget.Name)
             end
         end
     end
 
-    -- Fly movement keys
-    if input.KeyCode == Enum.KeyCode.W then Movement.W = true end
-    if input.KeyCode == Enum.KeyCode.A then Movement.A = true end
-    if input.KeyCode == Enum.KeyCode.S then Movement.S = true end
-    if input.KeyCode == Enum.KeyCode.D then Movement.D = true end
-    if input.KeyCode == Enum.KeyCode.Space then Movement.Up = true end
-    if input.KeyCode == Enum.KeyCode.LeftControl then Movement.Down = true end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.W then Movement.W = false end
-    if input.KeyCode == Enum.KeyCode.A then Movement.A = false end
-    if input.KeyCode == Enum.KeyCode.S then Movement.S = false end
-    if input.KeyCode == Enum.KeyCode.D then Movement.D = false end
-    if input.KeyCode == Enum.KeyCode.Space then Movement.Up = false end
-    if input.KeyCode == Enum.KeyCode.LeftControl then Movement.Down = false end
+    if input.KeyCode == Enum.KeyCode.Z and CanFly then
+        IsFlying = not IsFlying
+        if IsFlying then
+            Library:Notify('Fly Enabled')
+        else
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.Velocity = Vector3.zero end
+            Library:Notify('Fly Disabled')
+        end
+    end
 end)
 
 -- Theme & Save
