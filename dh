@@ -1,7 +1,4 @@
 -- LinoriaLib Setup
--- Instead of dynamic loadstring, assume you paste full content of Library.lua, ThemeManager.lua, SaveManager.lua here.
--- For simplicity, this example still uses loadstring but it's recommended to inline these when obfuscating with MoonSec
-
 local repo = 'https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/main/'
 local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
 local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
@@ -36,17 +33,19 @@ local Prediction = 0.123
 local Smoothness = 1
 
 -- Fly Vars
-local CanFly = false
 local IsFlying = false
-local FlyVelocity = nil
-local Speed = 50
+local CanFly = false
+local FlySpeed = 50
+local Movement = {
+    W = false,
+    A = false,
+    S = false,
+    D = false,
+    Up = false,
+    Down = false
+}
 
--- Movement Variables
-local MoveDirection = Vector3.zero
-local FlyUp = false
-local FlyDown = false
-
--- UI Flags
+-- UI Toggles
 CamlockBox:AddToggle('EnableCamlock', {
     Text = 'Camlock',
     Default = false,
@@ -83,13 +82,14 @@ FlyBox:AddToggle('AllowFly', {
         CanFly = v
         if not v and IsFlying then
             IsFlying = false
-            if FlyVelocity then FlyVelocity:Destroy() FlyVelocity = nil end
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.PlatformStand = false end
             Library:Notify('Fly forcibly disabled')
         end
     end
 })
 
--- Camlock Behavior
+-- Camlock Function
 RunService.RenderStepped:Connect(function()
     if CamlockEnabled and LockedTarget and LockedTarget.Character and LockedTarget.Character:FindFirstChild("HumanoidRootPart") then
         local targetPos = LockedTarget.Character.HumanoidRootPart.Position + (LockedTarget.Character.HumanoidRootPart.Velocity * Prediction)
@@ -98,49 +98,50 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Fly Movement (Void Clamp)
-RunService.Heartbeat:Connect(function()
+-- Fly Movement
+RunService.RenderStepped:Connect(function()
     if IsFlying and CanFly and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
         local hrp = LocalPlayer.Character.HumanoidRootPart
+        local camCF = Camera.CFrame
+        local moveDirection = Vector3.zero
 
-        if not FlyVelocity then
-            FlyVelocity = Instance.new("BodyVelocity")
-            FlyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-            FlyVelocity.P = 10000
-            FlyVelocity.Parent = hrp
+        if Movement.W then moveDirection = moveDirection + camCF.LookVector end
+        if Movement.S then moveDirection = moveDirection - camCF.LookVector end
+        if Movement.A then moveDirection = moveDirection - camCF.RightVector end
+        if Movement.D then moveDirection = moveDirection + camCF.RightVector end
+        if Movement.Up then moveDirection = moveDirection + Vector3.new(0, 1, 0) end
+        if Movement.Down then moveDirection = moveDirection - Vector3.new(0, 1, 0) end
+
+        moveDirection = moveDirection.Unit * FlySpeed
+        if moveDirection.Magnitude > 0 then
+            hrp.Velocity = moveDirection
+        else
+            hrp.Velocity = Vector3.zero
         end
 
-        -- Get direction based on camera
-        local camCF = workspace.CurrentCamera.CFrame
-        local moveDir = camCF:VectorToWorldSpace(MoveDirection).Unit
-        local vertical = (FlyUp and 1 or 0) - (FlyDown and 1 or 0)
-        local finalVelocity = (moveDir * Speed) + Vector3.new(0, vertical * Speed, 0)
-        FlyVelocity.Velocity = finalVelocity
-
-        -- Auto disable if void fall
-        if hrp.Position.Y < -100 then
+        if hrp.Position.Y < -25 then
             IsFlying = false
-            FlyVelocity:Destroy()
-            FlyVelocity = nil
-            Library:Notify("Fly auto-disabled (Void Fall)")
+            hrp.CFrame = CFrame.new(0, 50, 0)
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.PlatformStand = false end
+            Library:Notify("Fly disabled: void protection")
         end
-    elseif FlyVelocity then
-        FlyVelocity:Destroy()
-        FlyVelocity = nil
     end
 end)
 
--- Key Input Tracking for Movement
+-- Input
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
 
-    -- Fly Toggle
+    -- Fly toggle
     if input.KeyCode == Enum.KeyCode.Z and CanFly then
         IsFlying = not IsFlying
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = IsFlying end
         Library:Notify(IsFlying and "Fly Enabled" or "Fly Disabled")
     end
 
-    -- Camlock Toggle
+    -- Camlock
     if input.KeyCode == Enum.KeyCode.Q and CamlockEnabled then
         if LockedTarget then
             LockedTarget = nil
@@ -149,15 +150,11 @@ UserInputService.InputBegan:Connect(function(input, gpe)
             local closest, shortest = nil, math.huge
             for _, player in ipairs(Players:GetPlayers()) do
                 if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                    local hrp = player.Character.HumanoidRootPart
-                    local screenPos, onScreen = Camera:WorldToScreenPoint(hrp.Position)
-                    if onScreen then
-                        local mousePos = Vector2.new(Mouse.X, Mouse.Y)
-                        local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                        if dist < shortest then
-                            shortest = dist
-                            closest = player
-                        end
+                    local screenPoint, onScreen = Camera:WorldToScreenPoint(player.Character.HumanoidRootPart.Position)
+                    local dist = (Vector2.new(screenPoint.X, screenPoint.Y) - Vector2.new(Mouse.X, Mouse.Y)).Magnitude
+                    if dist < shortest and onScreen then
+                        shortest = dist
+                        closest = player
                     end
                 end
             end
@@ -168,22 +165,22 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         end
     end
 
-    -- Movement
-    if input.KeyCode == Enum.KeyCode.W then MoveDirection += Vector3.new(0, 0, -1) end
-    if input.KeyCode == Enum.KeyCode.S then MoveDirection += Vector3.new(0, 0, 1) end
-    if input.KeyCode == Enum.KeyCode.A then MoveDirection += Vector3.new(-1, 0, 0) end
-    if input.KeyCode == Enum.KeyCode.D then MoveDirection += Vector3.new(1, 0, 0) end
-    if input.KeyCode == Enum.KeyCode.Space then FlyUp = true end
-    if input.KeyCode == Enum.KeyCode.LeftControl then FlyDown = true end
+    -- Fly movement keys
+    if input.KeyCode == Enum.KeyCode.W then Movement.W = true end
+    if input.KeyCode == Enum.KeyCode.A then Movement.A = true end
+    if input.KeyCode == Enum.KeyCode.S then Movement.S = true end
+    if input.KeyCode == Enum.KeyCode.D then Movement.D = true end
+    if input.KeyCode == Enum.KeyCode.Space then Movement.Up = true end
+    if input.KeyCode == Enum.KeyCode.LeftControl then Movement.Down = true end
 end)
 
 UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode == Enum.KeyCode.W then MoveDirection -= Vector3.new(0, 0, -1) end
-    if input.KeyCode == Enum.KeyCode.S then MoveDirection -= Vector3.new(0, 0, 1) end
-    if input.KeyCode == Enum.KeyCode.A then MoveDirection -= Vector3.new(-1, 0, 0) end
-    if input.KeyCode == Enum.KeyCode.D then MoveDirection -= Vector3.new(1, 0, 0) end
-    if input.KeyCode == Enum.KeyCode.Space then FlyUp = false end
-    if input.KeyCode == Enum.KeyCode.LeftControl then FlyDown = false end
+    if input.KeyCode == Enum.KeyCode.W then Movement.W = false end
+    if input.KeyCode == Enum.KeyCode.A then Movement.A = false end
+    if input.KeyCode == Enum.KeyCode.S then Movement.S = false end
+    if input.KeyCode == Enum.KeyCode.D then Movement.D = false end
+    if input.KeyCode == Enum.KeyCode.Space then Movement.Up = false end
+    if input.KeyCode == Enum.KeyCode.LeftControl then Movement.Down = false end
 end)
 
 -- Theme & Save
